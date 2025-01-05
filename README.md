@@ -66,6 +66,30 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## 使用 Docker 部署
+
+可以使用 Docker 和 Docker Compose 部署此服務
+
+### 1. 構建 Docker 映像
+
+在項目根目錄下，執行以下命令構建 Docker 映像：
+
+```bash
+docker-compose build
+```
+
+### 2. 運行容器
+
+構建完成後，執行以下命令啟動容器：
+
+```bash
+docker-compose up
+```
+
+應用將運行在 http://localhost:8501。
+
+
+
 ## 系統需求
 
 建議使用 Python 3.12 或以上版本，以確保最佳相容性與性能。
