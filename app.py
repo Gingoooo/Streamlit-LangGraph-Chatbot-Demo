@@ -5,10 +5,17 @@ from dotenv import load_dotenv
 
 from typing import Annotated
 from typing_extensions import TypedDict
+from datetime import datetime
+
+from langchain_core.tools import tool
 from langgraph.graph import StateGraph
+from langgraph.prebuilt import ToolNode
 from langgraph.graph.message import add_messages
 from langchain_core.runnables import RunnableConfig
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langgraph.graph import StateGraph, START, END
+
+
 
 # 從 config 檔案匯入設定
 from prompts import SYSTEM_PROMPT
@@ -24,18 +31,54 @@ os.environ['GOOGLE_API_KEY'] = os.getenv('API_KEY', default=None)
 class State(TypedDict):
     messages: Annotated[list, add_messages]
 
+async def should_continue(state: State, config: RunnableConfig):
+    messages = state["messages"]
+    last_message = messages[-1]
+    if last_message.tool_calls:
+        return "tools"
+    return END
+
 # 定義 chatbot 函式
 async def chatbot(state: State, config: RunnableConfig):
-    response = await llm_chat_mode.ainvoke(state["messages"], config)
+    response = await llm_with_tools.ainvoke(state["messages"], config)
     return {"messages": response}
 
+# 定義 Agent 工具
+@tool
+async def get_date_and_time():
+    """
+    Retrieve the current date and time.
+
+    This tool provides the current date and time as separate values.
+    It is useful for applications that require real-time date and time information.
+
+    Returns:
+        dict: A dictionary containing the current date and time.
+              - "date": The current date in YYYY-MM-DD format (str).
+              - "time": The current time in HH:MM:SS format (str).
+    """
+    current_datetime = datetime.now()
+    return {
+        "date": current_datetime.date().isoformat(),
+        "time": current_datetime.time().strftime("%H:%M:%S")
+    }
+
 # 初始化 LLM 與圖形生成器
-llm_chat_mode = ChatGoogleGenerativeAI(model=API_SETTING['MODEL_NAME'])
+llm = ChatGoogleGenerativeAI(model=API_SETTING['MODEL_NAME'])
+
+tools = [get_date_and_time]
+tool_node = ToolNode(tools)
+llm_with_tools = llm.bind_tools(tools)
+
 graph_builder = StateGraph(State)
 
-graph_builder.add_node("chatbot", chatbot)
-graph_builder.set_entry_point("chatbot")
-graph_builder.set_finish_point("chatbot")
+graph_builder.add_node("agent", chatbot)
+graph_builder.add_node("tools", tool_node)
+
+graph_builder.add_edge(START, "agent")
+graph_builder.add_conditional_edges("agent", should_continue, ["tools", END])
+graph_builder.add_edge("tools", "agent")
+
 graph = graph_builder.compile()
 
 
@@ -88,8 +131,13 @@ async def main():
         assistant_reply = ""
         with st.chat_message("assistant"):
             partial_placeholder = st.empty()
-            async for msg, _ in graph.astream({"messages": st.session_state["messages"]}, stream_mode="messages"):
+            async for msg, info in graph.astream({"messages": st.session_state["messages"]}, stream_mode="messages"):
                 chunk_text = msg.content
+                
+                # 過濾 tools 的相關資訊在對話內
+                if info['langgraph_node'] == "tools":
+                    continue
+                
                 assistant_reply += chunk_text
                 partial_placeholder.write(assistant_reply + "▌")
 
